@@ -2,7 +2,7 @@
 #include "WiFiProv.h"
 #include <nvs_flash.h>
 #include "esp_camera.h"
-#include "esp_http_server.h" // Konieczne dla httpd_handle_t
+#include "esp_http_server.h"
 #include "img_converters.h"
 #include "Camera_pins.h"
 
@@ -15,11 +15,10 @@ const char * _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_B
 const char * _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 const char * _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
-// DODANE: Globalna deklaracja serwera
+//Globalna deklaracja serwera
 httpd_handle_t stream_httpd = NULL;
 
 static esp_err_t stream_handler(httpd_req_t * req) {
-  // ... (Zawartość Twojej funkcji stream_handler pozostaje bez zmian)
   camera_fb_t * fb = NULL;
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;
@@ -180,14 +179,4 @@ void loop() {
     }
   }
 
-  static unsigned long lastPrintTime = 0;
-  if (millis() - lastPrintTime > 10000) {
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.print("ESP dziala. Adres IP to: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("ESP32 w trybie konfiguracji BLE");
-    }
-    lastPrintTime = millis();
-  }
 }
