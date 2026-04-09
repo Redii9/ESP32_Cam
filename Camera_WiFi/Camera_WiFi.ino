@@ -5,11 +5,20 @@
 #include "esp_http_server.h"
 #include "img_converters.h"
 #include "Camera_pins.h"
+#include <ESP32Servo.h>
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 const char *service_name = "ESP32_CAM"; 
 const char *pop = "1234567";
 const int RESET_PIN = 0; 
+
+// Servo
+const int servoPin = 17;
+#define SERVOMIN 600
+#define SERVOMAX 2300
+#define SERVO_FREQ 50
+int position = 90;
+Servo servo;
 
 const char * _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 const char * _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
@@ -88,6 +97,13 @@ void startCameraServer() {
   }
 }
 
+// Servo
+void resetPosition() {
+  Serial.println("Resetowanie pozycji serwa...");
+  servo.write(position);
+  delay(500);
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(RESET_PIN, INPUT_PULLUP);
@@ -111,6 +127,11 @@ void setup() {
     Serial.println("Brak zapisanej sieci lub zasiegu. Uruchamiam BLE Provisioning");
     uruchomProvisioning();
   }
+
+  // Servo
+  servo.setPeriodHertz(SERVO_FREQ);
+  servo.attach(servoPin, SERVOMIN, SERVOMAX);
+  resetPosition();
 
   // PRZENIESIONE: Cała konfiguracja i inicjalizacja kamery musi być tutaj
   camera_config_t config;
