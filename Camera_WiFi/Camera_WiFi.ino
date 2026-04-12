@@ -6,6 +6,7 @@
 #include "img_converters.h"
 #include "Camera_pins.h"
 #include <ESP32Servo.h>
+#include "index.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 const char *service_name = "ESP32_CAM"; 
@@ -13,7 +14,7 @@ const char *pop = "1234567";
 const int RESET_PIN = 0; 
 
 // Servo
-const int servoPin = 17;
+const int servoPin = 33;
 #define SERVOMIN 600
 #define SERVOMAX 2300
 #define SERVO_FREQ 50
@@ -26,6 +27,31 @@ const char * _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\
 
 //Globalna deklaracja serwera
 httpd_handle_t stream_httpd = NULL;
+
+static esp_err_t index_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, index_html, strlen(index_html));
+}
+
+// Handler ruchu w lewo
+static esp_err_t left_handler(httpd_req_t *req) {
+    position += 10;
+    if (position > 180) position = 180;
+    servo.write(position);
+    Serial.printf("Serwo w lewo: %d\n", position);
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "OK", 2);
+}
+
+// Handler ruchu w prawo
+static esp_err_t right_handler(httpd_req_t *req) {
+    position -= 10;
+    if (position < 0) position = 0;
+    servo.write(position);
+    Serial.printf("Serwo w prawo: %d\n", position);
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "OK", 2);
+}
 
 static esp_err_t stream_handler(httpd_req_t * req) {
   camera_fb_t * fb = NULL;
@@ -84,17 +110,20 @@ static esp_err_t stream_handler(httpd_req_t * req) {
 }
 
 void startCameraServer() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.server_port = 80;
-  httpd_uri_t index_uri = {
-    .uri = "/",
-    .method = HTTP_GET,
-    .handler = stream_handler,
-    .user_ctx = NULL
-  };
-  if (httpd_start( & stream_httpd, & config) == ESP_OK) {
-    httpd_register_uri_handler(stream_httpd, & index_uri);
-  }
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 80;
+
+    httpd_uri_t index_uri = { .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL };
+    httpd_uri_t stream_uri = { .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL };
+    httpd_uri_t left_uri = { .uri = "/left", .method = HTTP_GET, .handler = left_handler, .user_ctx = NULL };
+    httpd_uri_t right_uri = { .uri = "/right", .method = HTTP_GET, .handler = right_handler, .user_ctx = NULL };
+
+    if (httpd_start(&stream_httpd, &config) == ESP_OK) {
+        httpd_register_uri_handler(stream_httpd, &index_uri);
+        httpd_register_uri_handler(stream_httpd, &stream_uri);
+        httpd_register_uri_handler(stream_httpd, &left_uri);
+        httpd_register_uri_handler(stream_httpd, &right_uri);
+    }
 }
 
 // Servo
@@ -128,10 +157,6 @@ void setup() {
     uruchomProvisioning();
   }
 
-  // Servo
-  servo.setPeriodHertz(SERVO_FREQ);
-  servo.attach(servoPin, SERVOMIN, SERVOMAX);
-  resetPosition();
 
   // PRZENIESIONE: Cała konfiguracja i inicjalizacja kamery musi być tutaj
   camera_config_t config;
@@ -176,6 +201,11 @@ void setup() {
   //Uruchomienie serwera
   startCameraServer();
   Serial.println("Serwer kamery uruchomiony.");
+
+  // Servo
+  servo.setPeriodHertz(SERVO_FREQ);
+  servo.attach(servoPin, SERVOMIN, SERVOMAX);
+  resetPosition();
 }
 
 void uruchomProvisioning() {
