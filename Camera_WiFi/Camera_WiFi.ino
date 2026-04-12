@@ -1,5 +1,6 @@
 #include "WiFi.h"
 #include "WiFiProv.h"
+//#include <ESPmDNS.h>
 #include <nvs_flash.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
@@ -11,7 +12,9 @@
 #define PART_BOUNDARY "123456789000000000000987654321"
 const char *service_name = "ESP32_CAM"; 
 const char *pop = "1234567";
-const int RESET_PIN = 0; 
+const int RESET_PIN = 0;
+ 
+bool camera_ok = false;
 
 // Servo
 const int servoPin = 33;
@@ -54,6 +57,10 @@ static esp_err_t right_handler(httpd_req_t *req) {
 }
 
 static esp_err_t stream_handler(httpd_req_t * req) {
+  if (!camera_ok) {
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Camera not available", 20);
+  }
   camera_fb_t * fb = NULL;
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;
@@ -67,7 +74,7 @@ static esp_err_t stream_handler(httpd_req_t * req) {
     fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("Uchwycenie obrazu się nie powiodło");
-      res = ESP_FAIL;
+      continue;
     } else {
       if (fb -> width > 400) {
         if (fb -> format != PIXFORMAT_JPEG) {
@@ -139,6 +146,8 @@ void setup() {
   delay(1000);
   Serial.println("\nStart ESP32");
 
+  //Sekcja nawiązania połączenia
+  WiFi.mode(WIFI_MODE_STA);
   WiFi.begin();
   int attempts = 0;
   Serial.print("Laczenie z siecia");
@@ -149,16 +158,28 @@ void setup() {
   }
   Serial.println();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("ESP32 jest juz polaczone z Wi-Fi. IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Brak zapisanej sieci lub zasiegu. Uruchamiam BLE Provisioning");
     uruchomProvisioning();
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print("*");
+    }
+    Serial.println();
   }
 
+  Serial.print("ESP32 jest połączone z Wi-Fi. IP: ");
+  Serial.println(WiFi.localIP());
+ // Dopoprawy jeszcze nie dziala
+ // if (MDNS.begin("esp32cam")) {
+ //     MDNS.addService("http", "tcp", 80); 
+ //     Serial.println("ESP32 działa pod: http://esp32cam.local");
+ // } else {
+ //     Serial.println("Błąd inicjalizacji mDNS!");
+ // }
 
-  // PRZENIESIONE: Cała konfiguracja i inicjalizacja kamery musi być tutaj
+  // Cała konfiguracja i inicjalizacja kamery
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -191,16 +212,20 @@ void setup() {
     config.fb_count = 1;
   }
 
-  //Inicjalizacja kamery i serwera
+  //Inicjalizacja kamery i obsługa błędu przy jej braku
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Wystąpił błąd inicjalizacji kamery 0x%x\n", err);
-    return;
+    Serial.printf("Kamera NIE działa, kod: 0x%x\n", err);
+    camera_ok = false;
+  } else {
+    Serial.println("Kamera OK");
+    camera_ok = true;
   }
   
-  //Uruchomienie serwera
-  startCameraServer();
-  Serial.println("Serwer kamery uruchomiony.");
+  if (WiFi.status() == WL_CONNECTED) {
+    startCameraServer();
+    Serial.println("Serwer kamery uruchomiony.");
+  }
 
   // Servo
   servo.setPeriodHertz(SERVO_FREQ);
