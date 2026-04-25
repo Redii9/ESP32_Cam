@@ -1,6 +1,6 @@
 #include "WiFi.h"
 #include "WiFiProv.h"
-//#include <ESPmDNS.h>
+#include <ESPmDNS.h>
 #include <nvs_flash.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
@@ -171,13 +171,12 @@ void setup() {
 
   Serial.print("ESP32 jest połączone z Wi-Fi. IP: ");
   Serial.println(WiFi.localIP());
- // Dopoprawy jeszcze nie dziala
- // if (MDNS.begin("esp32cam")) {
- //     MDNS.addService("http", "tcp", 80); 
- //     Serial.println("ESP32 działa pod: http://esp32cam.local");
- // } else {
- //     Serial.println("Błąd inicjalizacji mDNS!");
- // }
+  if (MDNS.begin("esp32cam")) {
+    MDNS.addService("http", "tcp", 80); 
+    Serial.println("ESP32 działa pod: http://esp32cam.local");
+  } else {
+    Serial.println("Błąd inicjalizacji mDNS!");
+  }
 
   // Cała konfiguracja i inicjalizacja kamery
   camera_config_t config;
