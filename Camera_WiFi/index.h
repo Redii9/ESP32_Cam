@@ -19,7 +19,8 @@ const char index_html[] = R"=====(
 </head>
 <body>
     <h2>ESP32-CAM Monitoring</h2>
-    <img src="/stream" id="stream">
+    <img src="" id="stream">
+
     <br><br>
     <button class="button" onclick="move('/left')">LEWO</button>
     <button class="button" onclick="move('/right')">PRAWO</button>
@@ -28,9 +29,9 @@ const char index_html[] = R"=====(
         function move(url) {
             fetch(url).catch(error => console.error('Błąd:', error));
         }
-        // Automatyczne ładowanie strumienia wideo
+        // Automatyczne ładowanie strumienia wideo na porcie 81
         window.onload = function() {
-            document.getElementById('stream').src = window.location.origin + '/stream';
+            document.getElementById("stream").src = window.location.protocol + "//" + window.location.hostname + ":81/stream";
         }
     </script>
 </body>
