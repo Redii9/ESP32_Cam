@@ -7,6 +7,7 @@
 #include "img_converters.h"
 #include "Camera_pins.h"
 #include <ESP32Servo.h>
+#include "esp_bt.h"
 #include "index.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
@@ -21,7 +22,8 @@ const int servoPin = 33;
 #define SERVOMIN 600
 #define SERVOMAX 2300
 #define SERVO_FREQ 50
-int position = 90;
+volatile int target_position = 90;
+int current_position = 90;
 Servo servo;
 
 const char * _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -30,6 +32,7 @@ const char * _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\
 
 //Globalna deklaracja serwera
 httpd_handle_t stream_httpd = NULL;
+httpd_handle_t camera_httpd = NULL;
 
 static esp_err_t index_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
@@ -38,22 +41,31 @@ static esp_err_t index_handler(httpd_req_t *req) {
 
 // Handler ruchu w lewo
 static esp_err_t left_handler(httpd_req_t *req) {
-    position += 10;
-    if (position > 180) position = 180;
-    servo.write(position);
-    Serial.printf("Serwo w lewo: %d\n", position);
+    target_position += 10;
+    if (target_position > 180) target_position = 180;
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, "OK", 2);
 }
 
 // Handler ruchu w prawo
 static esp_err_t right_handler(httpd_req_t *req) {
-    position -= 10;
-    if (position < 0) position = 0;
-    servo.write(position);
-    Serial.printf("Serwo w prawo: %d\n", position);
+    target_position -= 10;
+    if (target_position < 0) target_position = 0;
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, "OK", 2);
+}
+
+//Aktualny ruch kamery zadanie dla 2 rdzenia
+void servoTask(void * parameter) {
+  for(;;) { // Nieskończona pętla Taska
+    if (current_position != target_position) {
+      current_position = target_position;
+      servo.write(current_position);
+      Serial.printf("Serwo rusza na: %d\n", current_position);
+    }
+    // Usypia wątek na 20ms, zdejmując obciążenie z procesora
+    vTaskDelay(pdMS_TO_TICKS(20)); 
+  }
 }
 
 static esp_err_t stream_handler(httpd_req_t * req) {
@@ -112,6 +124,8 @@ static esp_err_t stream_handler(httpd_req_t * req) {
     if (res != ESP_OK) {
       break;
     }
+    //Usypianie na chwile bo juz nie wyrabia
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
   return res;
 }
@@ -119,65 +133,36 @@ static esp_err_t stream_handler(httpd_req_t * req) {
 void startCameraServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
+    config.max_uri_handlers = 8;
+    config.core_id = 0; // Rdzeń 0 dla WiFi/HTTP
 
+    // Główne endpointy (Strona i przyciski)
     httpd_uri_t index_uri = { .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL };
-    httpd_uri_t stream_uri = { .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL };
     httpd_uri_t left_uri = { .uri = "/left", .method = HTTP_GET, .handler = left_handler, .user_ctx = NULL };
     httpd_uri_t right_uri = { .uri = "/right", .method = HTTP_GET, .handler = right_handler, .user_ctx = NULL };
 
+    Serial.printf("Uruchamianie serwera kontroli na porcie: %d\n", config.server_port);
+    if (httpd_start(&camera_httpd, &config) == ESP_OK) {
+        httpd_register_uri_handler(camera_httpd, &index_uri);
+        httpd_register_uri_handler(camera_httpd, &left_uri);
+        httpd_register_uri_handler(camera_httpd, &right_uri);
+    }
+
+    //Konfiguracja DRUGIEGO serwera dla strumienia ---
+    config.server_port += 1; // Ustawia port na 81
+    config.ctrl_port += 1;   // Wymagane, by instancje się nie gryzły
+    
+    httpd_uri_t stream_uri = { .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL };
+
+    Serial.printf("Uruchamianie serwera wideo na porcie: %d\n", config.server_port);
     if (httpd_start(&stream_httpd, &config) == ESP_OK) {
-        httpd_register_uri_handler(stream_httpd, &index_uri);
         httpd_register_uri_handler(stream_httpd, &stream_uri);
-        httpd_register_uri_handler(stream_httpd, &left_uri);
-        httpd_register_uri_handler(stream_httpd, &right_uri);
     }
 }
 
-// Servo
-void resetPosition() {
-  Serial.println("Resetowanie pozycji serwa...");
-  servo.write(position);
-  delay(500);
-}
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(RESET_PIN, INPUT_PULLUP);
-  delay(1000);
-  Serial.println("\nStart ESP32");
-
-  //Sekcja nawiązania połączenia
-  WiFi.mode(WIFI_MODE_STA);
-  WiFi.begin();
-  int attempts = 0;
-  Serial.print("Laczenie z siecia");
-  while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  Serial.println();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Brak zapisanej sieci lub zasiegu. Uruchamiam BLE Provisioning");
-    uruchomProvisioning();
-
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print("*");
-    }
-    Serial.println();
-  }
-
-  Serial.print("ESP32 jest połączone z Wi-Fi. IP: ");
-  Serial.println(WiFi.localIP());
-  if (MDNS.begin("esp32cam")) {
-    MDNS.addService("http", "tcp", 80); 
-    Serial.println("ESP32 działa pod: http://esp32cam.local");
-  } else {
-    Serial.println("Błąd inicjalizacji mDNS!");
-  }
-
+void initCamera(){
+  
   // Cała konfiguracja i inicjalizacja kamery
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -198,7 +183,7 @@ void setup() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
@@ -220,7 +205,57 @@ void setup() {
     Serial.println("Kamera OK");
     camera_ok = true;
   }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(RESET_PIN, INPUT_PULLUP);
+  delay(1000);
+  Serial.println("\nStart ESP32");
+
+  //Sekcja nawiązania połączenia
+  WiFi.mode(WIFI_MODE_STA);
+  WiFi.begin();
+  int attempts = 0;
+  Serial.print("Laczenie z siecia");
+
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Brak zapisanej sieci lub zasiegu. Uruchamiam BLE Provisioning");
+    uruchomProvisioning();
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print("*");
+    }
+    Serial.println("\nPołączono");
+    
+    //Wyłączenie Bloutooth po połączeniu
+    btStop(); 
+    delay(100);
+    esp_bt_controller_deinit();
+    esp_bt_mem_release(ESP_BT_MODE_BTDM);
+    Serial.println("BLE Provisioning zatrzymany. Zwolniono zasoby.");
+  }
+
+  Serial.print("ESP32 jest połączone z Wi-Fi. IP: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin("esp32cam")) {
+    MDNS.addService("http", "tcp", 80); 
+    Serial.println("ESP32 działa pod: http://esp32cam.local");
+  } else {
+    Serial.println("Błąd inicjalizacji mDNS!");
+  }
   
+  initCamera();
+
   if (WiFi.status() == WL_CONNECTED) {
     startCameraServer();
     Serial.println("Serwer kamery uruchomiony.");
@@ -229,7 +264,19 @@ void setup() {
   // Servo
   servo.setPeriodHertz(SERVO_FREQ);
   servo.attach(servoPin, SERVOMIN, SERVOMAX);
-  resetPosition();
+  Serial.println("Restart pozycji serwa");
+  servo.write(current_position);
+
+  // Przypięcie Taska serwa do Rdzenia 1
+  xTaskCreatePinnedToCore(
+    servoTask,      /* Funkcja taska */
+    "ServoTask",    /* Nazwa */
+    2048,           /* Rozmiar stosu w bajtach */
+    NULL,           /* Parametry */
+    1,              /* Priorytet (1 to niski, wystarczający) */
+    NULL,           /* Uchwyt (niepotrzebny) */
+    1               /* Przypnij do Rdzenia 1 */
+  );
 }
 
 void uruchomProvisioning() {
