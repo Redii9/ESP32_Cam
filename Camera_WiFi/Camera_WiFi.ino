@@ -21,8 +21,8 @@ bool camera_ok = false;
 
 // Servo
 const int servoPin = 33;
-#define SERVOMIN 600
-#define SERVOMAX 2300
+#define SERVOMIN 900
+#define SERVOMAX 2600
 #define SERVO_FREQ 50
 volatile int target_position = 90;
 int current_position = 90;
